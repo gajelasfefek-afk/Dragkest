@@ -505,4 +505,4 @@ WebhookBtn.MouseButton1Click:Connect(function()
     end
 end)
 
-print("[User Finder v2.4] Loaded.")
+print("[User Finder v2.0] Loaded.")
