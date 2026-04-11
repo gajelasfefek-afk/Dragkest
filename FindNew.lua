@@ -1,6 +1,6 @@
 -- =============================================
---   Roblox User ID Finder v2.2
---   Fix: UI ukuran mobile, avatar rbxthumb, layout
+--   Roblox User ID Finder v2.3
+--   Fix: Tanggal -> Umur Akun
 -- =============================================
 
 local Players = game:GetService("Players")
@@ -34,6 +34,46 @@ local function httpPost(url, body)
 end
 
 -- =============================================
+-- HITUNG UMUR AKUN
+-- =============================================
+local function getAccountAge(createdISO)
+    -- Parse tanggal dari ISO string: "2022-07-10T..."
+    local y, m, d = createdISO:match("(%d+)-(%d+)-(%d+)")
+    if not y then return "Tidak diketahui", "Tidak diketahui" end
+
+    y, m, d = tonumber(y), tonumber(m), tonumber(d)
+
+    -- Waktu sekarang dari os.time()
+    local now = os.time()
+    local created = os.time({ year=y, month=m, day=d, hour=0, min=0, sec=0 })
+    local diff = now - created
+
+    local totalDays = math.floor(diff / 86400)
+    local years     = math.floor(totalDays / 365)
+    local months    = math.floor((totalDays % 365) / 30)
+    local days      = totalDays % 30
+
+    -- Format umur
+    local ageStr = ""
+    if years > 0 then
+        ageStr = years .. " thn"
+        if months > 0 then ageStr = ageStr .. " " .. months .. " bln" end
+    elseif months > 0 then
+        ageStr = months .. " bln"
+        if days > 0 then ageStr = ageStr .. " " .. days .. " hari" end
+    else
+        ageStr = totalDays .. " hari"
+    end
+
+    -- Format tanggal buat webhook
+    local months_name = {"Jan","Feb","Mar","Apr","May","Jun",
+                         "Jul","Aug","Sep","Oct","Nov","Dec"}
+    local dateStr = d .. " " .. (months_name[m] or m) .. " " .. y
+
+    return ageStr, dateStr
+end
+
+-- =============================================
 -- DESTROY OLD GUI
 -- =============================================
 pcall(function()
@@ -45,11 +85,8 @@ end)
 -- SCREEN SIZE
 -- =============================================
 local vp = workspace.CurrentCamera.ViewportSize
-local sw, sh = vp.X, vp.Y
-
--- Ukuran UI relatif terhadap layar (max 320px lebar)
-local W = math.min(320, sw * 0.85)
-local H = math.min(380, sh * 0.75)
+local W = math.min(320, vp.X * 0.85)
+local H = math.min(380, vp.Y * 0.75)
 
 -- =============================================
 -- GUI
@@ -64,7 +101,6 @@ if not ScreenGui.Parent or ScreenGui.Parent ~= game:GetService("CoreGui") then
     ScreenGui.Parent = localPlayer:WaitForChild("PlayerGui")
 end
 
--- Main Frame (pakai Scale biar responsive)
 local Frame = Instance.new("Frame")
 Frame.Size = UDim2.new(0, W, 0, H)
 Frame.Position = UDim2.new(0.5, -W/2, 0.5, -H/2)
@@ -73,7 +109,6 @@ Frame.BorderSizePixel = 0
 Frame.Parent = ScreenGui
 Instance.new("UICorner", Frame).CornerRadius = UDim.new(0, 12)
 
--- Shadow effect
 local Shadow = Instance.new("Frame")
 Shadow.Size = UDim2.new(1, 8, 1, 8)
 Shadow.Position = UDim2.new(0, -4, 0, -4)
@@ -96,7 +131,7 @@ local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, -50, 1, 0)
 TitleLabel.Position = UDim2.new(0, 12, 0, 0)
 TitleLabel.BackgroundTransparency = 1
-TitleLabel.Text = "🔍 User Finder v2.2"
+TitleLabel.Text = "🔍 User Finder v2.3"
 TitleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleLabel.TextSize = 14
 TitleLabel.Font = Enum.Font.GothamBold
@@ -115,9 +150,7 @@ CloseBtn.Parent = TitleBar
 Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 6)
 CloseBtn.MouseButton1Click:Connect(function() ScreenGui:Destroy() end)
 
--- =============================================
--- AVATAR (pakai rbxthumb - support di roblox)
--- =============================================
+-- Avatar
 local AvatarFrame = Instance.new("Frame")
 AvatarFrame.Size = UDim2.new(0, 64, 0, 64)
 AvatarFrame.Position = UDim2.new(0.5, -32, 0, 48)
@@ -145,9 +178,7 @@ AvatarIcon.TextXAlignment = Enum.TextXAlignment.Center
 AvatarIcon.TextYAlignment = Enum.TextYAlignment.Center
 AvatarIcon.Parent = AvatarFrame
 
--- =============================================
--- INFO PANEL
--- =============================================
+-- Info Panel
 local InfoFrame = Instance.new("Frame")
 InfoFrame.Size = UDim2.new(1, -16, 0, 148)
 InfoFrame.Position = UDim2.new(0, 8, 0, 122)
@@ -201,7 +232,7 @@ end
 local displayVal  = makeRow(InfoFrame, 4,   "✏️", "Display Name")
 local usernameVal = makeRow(InfoFrame, 36,  "👤", "Username")
 local useridVal   = makeRow(InfoFrame, 68,  "🆔", "User ID")
-local createdVal  = makeRow(InfoFrame, 100, "📅", "Akun Dibuat")
+local ageVal      = makeRow(InfoFrame, 100, "⏳", "Umur Akun")
 
 -- Divider
 local Div = Instance.new("Frame")
@@ -225,9 +256,7 @@ InputBox.Font = Enum.Font.Gotham
 InputBox.ClearTextOnFocus = false
 InputBox.Parent = Frame
 Instance.new("UICorner", InputBox).CornerRadius = UDim.new(0, 7)
-
-local InputPad = Instance.new("UIPadding", InputBox)
-InputPad.PaddingLeft = UDim.new(0, 8)
+Instance.new("UIPadding", InputBox).PaddingLeft = UDim.new(0, 8)
 
 -- Buttons
 local SearchBtn = Instance.new("TextButton")
@@ -265,25 +294,23 @@ StatusLabel.TextXAlignment = Enum.TextXAlignment.Center
 StatusLabel.Parent = Frame
 
 -- =============================================
--- DRAGGABLE (touch + mouse)
+-- DRAGGABLE
 -- =============================================
 local dragging, dragStart, startPos
-local function onInputBegan(input)
+TitleBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1
     or input.UserInputType == Enum.UserInputType.Touch then
         dragging = true
         dragStart = input.Position
         startPos = Frame.Position
     end
-end
-local function onInputEnded(input)
+end)
+TitleBar.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1
     or input.UserInputType == Enum.UserInputType.Touch then
         dragging = false
     end
-end
-TitleBar.InputBegan:Connect(onInputBegan)
-TitleBar.InputEnded:Connect(onInputEnded)
+end)
 UIS.InputChanged:Connect(function(input)
     if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
     or input.UserInputType == Enum.UserInputType.Touch) then
@@ -309,7 +336,7 @@ local function resetUI()
     displayVal.Text = "—"
     usernameVal.Text = "—"
     useridVal.Text = "—"
-    createdVal.Text = "—"
+    ageVal.Text = "—"
     AvatarImg.Image = ""
     AvatarIcon.Visible = true
     currentData = {}
@@ -337,14 +364,15 @@ SearchBtn.MouseButton1Click:Connect(function()
         return
     end
 
-    -- Avatar pakai rbxthumb (render langsung di Roblox, pasti work!)
+    -- Avatar langsung pakai rbxthumb
     AvatarImg.Image = "rbxthumb://type=AvatarHeadShot&id=" .. userId .. "&w=150&h=150"
     AvatarIcon.Visible = false
 
     setStatus("⏳ Ambil info...", Color3.fromRGB(180, 180, 180))
 
     local displayName = username
-    local createdDate = "Tidak diketahui"
+    local ageStr = "Tidak diketahui"
+    local dateStr = "Tidak diketahui"
     local avatarUrl = ""
 
     -- Info dari Roblox API
@@ -354,12 +382,7 @@ SearchBtn.MouseButton1Click:Connect(function()
         if okP and info then
             displayName = info.displayName or username
             if info.created then
-                local y, m, d = info.created:match("(%d+)-(%d+)-(%d+)")
-                local months = {"Jan","Feb","Mar","Apr","May","Jun",
-                                "Jul","Aug","Sep","Oct","Nov","Dec"}
-                if y and m and d then
-                    createdDate = d.." "..(months[tonumber(m)] or m).." "..y
-                end
+                ageStr, dateStr = getAccountAge(info.created)
             end
         end
     end
@@ -367,7 +390,7 @@ SearchBtn.MouseButton1Click:Connect(function()
     -- Avatar URL untuk webhook
     local avatarJson = httpGet(
         "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds="
-        ..userId.."&size=150x150&format=Png&isCircular=false"
+        .. userId .. "&size=150x150&format=Png&isCircular=false"
     )
     if avatarJson then
         local okP, data = pcall(HttpService.JSONDecode, HttpService, avatarJson)
@@ -380,7 +403,7 @@ SearchBtn.MouseButton1Click:Connect(function()
     displayVal.Text = displayName
     usernameVal.Text = username
     useridVal.Text = tostring(userId)
-    createdVal.Text = createdDate
+    ageVal.Text = ageStr
 
     pcall(function() setclipboard(tostring(userId)) end)
 
@@ -388,7 +411,8 @@ SearchBtn.MouseButton1Click:Connect(function()
         userId = tostring(userId),
         username = username,
         displayName = displayName,
-        createdDate = createdDate,
+        ageStr = ageStr,
+        dateStr = dateStr,
         avatarUrl = avatarUrl
     }
 
@@ -420,9 +444,9 @@ WebhookBtn.MouseButton1Click:Connect(function()
                 {name="👤 Username",    value="`"..currentData.username.."`",    inline=true},
                 {name="✏️ Display Name",value="`"..currentData.displayName.."`", inline=true},
                 {name="🆔 User ID",     value="`"..currentData.userId.."`",      inline=false},
-                {name="📅 Akun Dibuat", value="`"..currentData.createdDate.."`", inline=false},
+                {name="⏳ Umur Akun",   value="`"..currentData.ageStr.."` (dibuat: "..currentData.dateStr..")", inline=false},
             },
-            footer = {text = "Roblox User Finder v2.2 • Delta Executor"},
+            footer = {text = "Roblox User Finder v2.3 • Delta Executor"},
             timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ")
         }}
     })
@@ -435,4 +459,4 @@ WebhookBtn.MouseButton1Click:Connect(function()
     end
 end)
 
-print("[User Finder v2.2] Loaded!")
+print("[User Finder v2.3] Loaded!")
