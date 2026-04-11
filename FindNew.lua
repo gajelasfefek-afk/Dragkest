@@ -416,7 +416,7 @@ SearchBtn.MouseButton1Click:Connect(function()
         avatarUrl = avatarUrl
     }
 
-    setStatus("✅ Ketemu! ID di-copy.", Color3.fromRGB(100, 220, 120))
+    setStatus("Find,ID di-copy.", Color3.fromRGB(100, 220, 120))
 end)
 
 -- =============================================
@@ -424,7 +424,7 @@ end)
 -- =============================================
 WebhookBtn.MouseButton1Click:Connect(function()
     if not currentData.userId then
-        setStatus("⚠️ Cari user dulu!", Color3.fromRGB(255, 200, 50))
+        setStatus("⚠️ Cari user dulu", Color3.fromRGB(255, 200, 50))
         return
     end
 
