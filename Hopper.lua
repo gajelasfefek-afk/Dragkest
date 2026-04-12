@@ -93,49 +93,37 @@ local function disable_freeform()
     shell("su -c 'settings put global force_resizable_activities 0' 2>/dev/null")
 end
 
--- ── Scan semua package Roblox di device ───────────────────
--- Mengembalikan list semua package yang mengandung keyword tertentu
-local function scan_packages(keyword)
-    keyword = keyword or "roblox"
-    local raw = shell_read("pm list packages | grep -i '" .. keyword .. "'")
+-- ── Scan semua package Roblox — pakai su -c ───────────────
+local function scan_packages()
+    -- Pakai su -c karena pm list butuh root buat kebaca di Termux
+    local raw = shell_read("su -c 'pm list packages' | grep -i 'roblox'")
     local pkgs = {}
     for line in raw:gmatch("[^\r\n]+") do
         local pkg = line:match("package:(.+)")
         if pkg then
-            pkg = pkg:gsub("%s+", "")
-            table.insert(pkgs, pkg)
+            table.insert(pkgs, pkg:gsub("%s+", ""))
         end
     end
     return pkgs
 end
 
--- ── Pilih package dari list (interaktif) ──────────────────
+-- ── Pick package dari list ────────────────────────────────
 local function pick_package(pkgs, current)
     if #pkgs == 0 then
-        print(c(C.red, "  [!] No Roblox packages found on device."))
-        print(c(C.gray, "  Enter package manually:"))
-        io.write(c(C.yellow, "  Package: "))
+        io.write(c(C.yellow, "  Enter package manually: "))
         return io.read()
     end
+    if #pkgs == 1 then return pkgs[1] end
 
-    if #pkgs == 1 then
-        return pkgs[1]
-    end
-
-    -- Lebih dari 1: tampilkan pilihan
-    print(c(C.gray, SEP))
-    print(c(C.yellow, "  Multiple Roblox packages found:"))
     print(c(C.gray, SEP))
     for i, pkg in ipairs(pkgs) do
-        local marker = (pkg == current) and c(C.green, " ◄ current") or ""
+        local marker = (pkg == current) and c(C.green, " ◄") or ""
         print(string.format(c(C.cyan, "  [%d]") .. c(C.white, "  %s") .. "%s", i, pkg, marker))
     end
     print(c(C.gray, SEP))
     io.write(c(C.yellow, "  Select number: "))
     local sel = tonumber(io.read())
-    if sel and pkgs[sel] then
-        return pkgs[sel]
-    end
+    if sel and pkgs[sel] then return pkgs[sel] end
     return current
 end
 
@@ -146,7 +134,6 @@ local function save_db(data)
     if f then
         local srv_list = {}
         for _, v in ipairs(data.list) do
-            -- simpan package per-server juga
             local pkg_field = v.package and ('"pkg": "' .. v.package .. '", ') or ""
             table.insert(srv_list, string.format(
                 '    {%s"name": "%s", "link": "%s", "min": %d}',
@@ -171,19 +158,13 @@ local function load_db()
     local pkg   = content:match('"package"%s*:%s*"(.-)"') or "com.roblox.client"
     local ffstr = content:match('"freeform"%s*:%s*(%a+)') or "false"
     local list  = {}
-    -- Parse server dengan optional "pkg" field
-    for entry in content:gmatch("{(.-)}" ) do
+    for entry in content:gmatch("{(.-)}") do
         local spkg = entry:match('"pkg"%s*:%s*"(.-)"')
         local n    = entry:match('"name"%s*:%s*"(.-)"')
         local l    = entry:match('"link"%s*:%s*"(.-)"')
         local m    = entry:match('"min"%s*:%s*(%d+)')
         if n and l and m then
-            table.insert(list, {
-                name    = n,
-                link    = l,
-                min     = tonumber(m),
-                package = spkg  -- bisa nil kalau belum di-assign
-            })
+            table.insert(list, {name=n, link=l, min=tonumber(m), package=spkg})
         end
     end
     return {package = pkg, freeform = (ffstr == "true"), list = list}
@@ -242,16 +223,13 @@ end
 
 -- ── Main ──────────────────────────────────────────────────
 local function main()
-    local db = load_db()
+    local db   = load_db()
+    local pkgs = scan_packages()
 
-    -- Scan package saat startup, auto-pick kalau cuma 1
-    local pkgs = scan_packages("roblox")
+    -- Auto-pick kalau cuma 1 package
     if #pkgs == 1 then
         db.package = pkgs[1]
-    elseif #pkgs == 0 then
-        -- biarkan dari saved
     end
-    -- kalau >1, biarkan user pilih manual dari menu
 
     while true do
         draw_header("PRIVATE SERVER HOPPER")
@@ -286,13 +264,11 @@ local function main()
             else
                 if db.freeform then enable_freeform() end
                 clear_stop()
-
                 local i = 1
                 local running = true
 
                 while running do
                     local s = db.list[i]
-                    -- Gunakan package khusus server, atau fallback ke default
                     local active_pkg = s.package or db.package
 
                     draw_header("AUTO-HOP ACTIVE")
@@ -340,20 +316,25 @@ local function main()
             io.write(c(C.yellow, "  PS Link      : ")); local l = io.read()
             io.write(c(C.yellow, "  Duration(min): ")); local m = tonumber(io.read()) or 5
 
-            -- Pilih package untuk server ini
             local srv_pkg = nil
             if #pkgs > 1 then
-                print(c(C.cyan, "\n  Assign a package for this server?"))
-                print(c(C.gray, "  (leave blank to use default: " .. db.package .. ")"))
-                local chosen = pick_package(pkgs, db.package)
-                if chosen ~= db.package then srv_pkg = chosen end
+                print(c(C.cyan, "\n  Assign package for this server:"))
+                print(c(C.gray, "  [0]  Default (" .. db.package .. ")"))
+                for pi, pkg in ipairs(pkgs) do
+                    print(string.format(c(C.cyan, "  [%d]") .. c(C.white, "  %s"), pi, pkg))
+                end
+                io.write(c(C.yellow, "  Select: "))
+                local psel = tonumber(io.read())
+                if psel and psel > 0 and pkgs[psel] then
+                    srv_pkg = pkgs[psel]
+                end
             end
 
             if n ~= "" and l ~= "" then
-                table.insert(db.list, {name = n, link = l, min = m, package = srv_pkg})
+                table.insert(db.list, {name=n, link=l, min=m, package=srv_pkg})
                 save_db(db)
-                local pkg_info = srv_pkg and c(C.cyan, " [" .. srv_pkg .. "]") or c(C.gray, " [default]")
-                print(c(C.green, "\n  [+] Server added!") .. pkg_info)
+                local tag = srv_pkg and c(C.cyan, " [" .. srv_pkg .. "]") or c(C.gray, " [default]")
+                print(c(C.green, "\n  [+] Server added!") .. tag)
             else
                 print(c(C.red, "\n  [!] Failed — incomplete data."))
             end
@@ -367,10 +348,10 @@ local function main()
             else
                 print(c(C.gray, SEP))
                 for idx, val in ipairs(db.list) do
-                    local pkg_tag = val.package and c(C.cyan, " [" .. val.package:sub(1,20) .. "]") or c(C.gray, " [default]")
+                    local tag = val.package and c(C.cyan, " [" .. val.package:sub(1,18) .. "]") or c(C.gray, " [default]")
                     print(string.format(
-                        c(C.yellow, "  [%d]") .. c(C.white, " %-22s") .. c(C.gray, " %dmin") .. "%s",
-                        idx, val.name:sub(1,22), val.min, pkg_tag
+                        c(C.yellow, "  [%d]") .. c(C.white, " %-20s") .. c(C.gray, " %dmin") .. "%s",
+                        idx, val.name:sub(1,20), val.min, tag
                     ))
                 end
                 print(c(C.gray, SEP))
@@ -398,7 +379,7 @@ local function main()
                     ))
                 end
                 print(c(C.gray, SEP))
-                io.write(c(C.cyan, "\n  Select server number: "))
+                io.write(c(C.cyan, "\n  Select server: "))
                 local sel = tonumber(io.read())
                 if sel and db.list[sel] then
                     print(c(C.gray, "  Current: ") .. c(C.cyan, db.list[sel].min .. " min"))
@@ -407,7 +388,7 @@ local function main()
                     if new_m and new_m > 0 then
                         db.list[sel].min = new_m
                         save_db(db)
-                        print(c(C.green, "  [OK] Duration updated → " .. new_m .. " min"))
+                        print(c(C.green, "  [OK] Updated → " .. new_m .. " min"))
                     else
                         print(c(C.red, "  [!] Invalid input."))
                     end
@@ -423,38 +404,39 @@ local function main()
             if #db.list == 0 then
                 print(c(C.gray, "  (empty)")); shell("sleep 1")
             elseif #pkgs == 0 then
-                print(c(C.red, "  [!] No Roblox packages detected.")); shell("sleep 2")
+                print(c(C.red, "  [!] No Roblox packages detected."))
+                shell("sleep 2")
             else
                 print(c(C.gray, SEP))
                 for idx, val in ipairs(db.list) do
-                    local pkg_tag = val.package and c(C.cyan, val.package) or c(C.gray, "default (" .. db.package .. ")")
+                    local tag = val.package and c(C.cyan, val.package) or c(C.gray, "default")
                     print(string.format(
                         c(C.yellow, "  [%d]") .. c(C.white, "  %-22s") .. "  → %s",
-                        idx, val.name:sub(1,22), pkg_tag
+                        idx, val.name:sub(1,22), tag
                     ))
                 end
                 print(c(C.gray, SEP))
-                io.write(c(C.cyan, "\n  Select server to reassign: "))
+                io.write(c(C.cyan, "\n  Select server: "))
                 local sel = tonumber(io.read())
                 if sel and db.list[sel] then
-                    print(c(C.yellow, "\n  Choose package for: ") .. c(C.white, db.list[sel].name))
-                    print(c(C.gray, "  [0]  Use default (" .. db.package .. ")"))
+                    print(c(C.yellow, "\n  Package for: ") .. c(C.white, db.list[sel].name))
+                    print(c(C.gray, "  [0]  Default (" .. db.package .. ")"))
                     for pi, pkg in ipairs(pkgs) do
-                        local marker = (pkg == db.list[sel].package) and c(C.green, " ◄") or ""
-                        print(string.format(c(C.cyan, "  [%d]") .. c(C.white, "  %s") .. "%s", pi, pkg, marker))
+                        local mark = (pkg == db.list[sel].package) and c(C.green, " ◄") or ""
+                        print(string.format(c(C.cyan, "  [%d]") .. c(C.white, "  %s") .. "%s", pi, pkg, mark))
                     end
                     io.write(c(C.yellow, "\n  Select: "))
                     local psel = tonumber(io.read())
                     if psel == 0 then
                         db.list[sel].package = nil
                         save_db(db)
-                        print(c(C.green, "  [OK] Reset to default package."))
+                        print(c(C.green, "  [OK] Reset to default."))
                     elseif psel and pkgs[psel] then
                         db.list[sel].package = pkgs[psel]
                         save_db(db)
-                        print(c(C.green, "  [OK] Package assigned → " .. pkgs[psel]))
+                        print(c(C.green, "  [OK] Assigned → " .. pkgs[psel]))
                     else
-                        print(c(C.red, "  [!] Invalid selection."))
+                        print(c(C.red, "  [!] Invalid."))
                     end
                 else
                     print(c(C.red, "  [!] Invalid selection."))
@@ -465,13 +447,12 @@ local function main()
         -- ── [6] Change Default Package ─────────────────────
         elseif opt == "6" then
             draw_header("CHANGE DEFAULT PACKAGE")
-            print(c(C.gray, "  Current default : ") .. c(C.white, db.package))
+            print(c(C.gray, "  Current: ") .. c(C.white, db.package))
             print(c(C.gray, SEP))
             if #pkgs > 0 then
-                print(c(C.yellow, "  Detected on device:"))
                 for pi, pkg in ipairs(pkgs) do
-                    local marker = (pkg == db.package) and c(C.green, " ◄ current") or ""
-                    print(string.format(c(C.cyan, "  [%d]") .. c(C.white, "  %s") .. "%s", pi, pkg, marker))
+                    local mark = (pkg == db.package) and c(C.green, " ◄ current") or ""
+                    print(string.format(c(C.cyan, "  [%d]") .. c(C.white, "  %s") .. "%s", pi, pkg, mark))
                 end
                 print(c(C.gray, "  [m]  Enter manually"))
                 print(c(C.gray, SEP))
@@ -480,23 +461,23 @@ local function main()
                 if tonumber(sel) and pkgs[tonumber(sel)] then
                     db.package = pkgs[tonumber(sel)]
                     save_db(db)
-                    print(c(C.green, "  [OK] Default package → " .. db.package))
+                    print(c(C.green, "  [OK] Default → " .. db.package))
                 elseif sel == "m" then
-                    io.write(c(C.yellow, "  Enter package: "))
+                    io.write(c(C.yellow, "  Package: "))
                     local new_p = io.read()
                     if new_p and new_p:match("%.") then
                         db.package = new_p; save_db(db)
-                        print(c(C.green, "  [OK] Package updated → " .. new_p))
+                        print(c(C.green, "  [OK] Updated → " .. new_p))
                     else
                         print(c(C.red, "  [!] Invalid format."))
                     end
                 end
             else
-                io.write(c(C.yellow, "  Enter package manually: "))
+                io.write(c(C.yellow, "  Enter package: "))
                 local new_p = io.read()
                 if new_p and new_p:match("%.") then
                     db.package = new_p; save_db(db)
-                    print(c(C.green, "  [OK] Package updated → " .. new_p))
+                    print(c(C.green, "  [OK] Updated → " .. new_p))
                 else
                     print(c(C.red, "  [!] Invalid format."))
                 end
@@ -515,7 +496,6 @@ local function main()
             else
                 disable_freeform()
                 print(c(C.gray,  "  [OFF] Freeform disabled."))
-                print(c(C.gray,  "  App will launch in fullscreen as usual."))
             end
             shell("sleep 2")
 
