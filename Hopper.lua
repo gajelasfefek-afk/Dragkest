@@ -93,15 +93,18 @@ local function disable_freeform()
     shell("su -c 'settings put global force_resizable_activities 0' 2>/dev/null")
 end
 
--- ── Scan semua package Roblox — pakai su -c ───────────────
+-- ── Scan package Roblox ───────────────────────────────────
 local function scan_packages()
-    -- Pakai su -c karena pm list butuh root buat kebaca di Termux
     local raw = shell_read("su -c 'pm list packages' | grep -i 'roblox'")
     local pkgs = {}
     for line in raw:gmatch("[^\r\n]+") do
-        local pkg = line:match("package:(.+)")
+        -- ambil hanya bagian setelah "package:" dan strip semua whitespace
+        local pkg = line:match("^package:(.+)$")
         if pkg then
-            table.insert(pkgs, pkg:gsub("%s+", ""))
+            pkg = pkg:match("^%s*(.-)%s*$") -- trim
+            if pkg ~= "" then
+                table.insert(pkgs, pkg)
+            end
         end
     end
     return pkgs
@@ -114,7 +117,6 @@ local function pick_package(pkgs, current)
         return io.read()
     end
     if #pkgs == 1 then return pkgs[1] end
-
     print(c(C.gray, SEP))
     for i, pkg in ipairs(pkgs) do
         local marker = (pkg == current) and c(C.green, " ◄") or ""
@@ -226,7 +228,6 @@ local function main()
     local db   = load_db()
     local pkgs = scan_packages()
 
-    -- Auto-pick kalau cuma 1 package
     if #pkgs == 1 then
         db.package = pkgs[1]
     end
