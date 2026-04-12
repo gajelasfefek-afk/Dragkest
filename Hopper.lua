@@ -1,5 +1,5 @@
 -- =========================================================
---   ROBLOX AUTO-HOPPER PRO  ·  Termux Edition  v3.0
+--   ROBLOX AUTO-HOPPER PRO  ·  Termux Edition  v4.0
 --   by Dragkest
 -- =========================================================
 
@@ -12,14 +12,12 @@ local config_file  = INSTALL_DIR .. "/hopper_data.json"
 
 local function bootstrap()
     os.execute("mkdir -p " .. INSTALL_DIR)
-
     io.write("\27[1;33m[~] Checking for updates...\27[0m\r")
     io.flush()
 
     local tmp = INSTALL_DIR .. "/.hopper_tmp.lua"
     local ret = os.execute(string.format(
-        "curl -L -o '%s' '%s' 2>/dev/null",
-        tmp, REMOTE_URL
+        "curl -L -o '%s' '%s' 2>/dev/null", tmp, REMOTE_URL
     ))
 
     if ret == 0 then
@@ -58,10 +56,7 @@ bootstrap()
 --   MAIN SCRIPT
 -- =========================================================
 
--- ── Helpers ───────────────────────────────────────────────
-local function shell(cmd)
-    return os.execute(cmd)
-end
+local function shell(cmd) return os.execute(cmd) end
 
 local function shell_read(cmd)
     local f = io.popen(cmd .. " 2>/dev/null")
@@ -70,42 +65,78 @@ local function shell_read(cmd)
     return s or ""
 end
 
+-- ── ANSI Colors ───────────────────────────────────────────
+local C = {
+    reset   = "\27[0m",  cyan    = "\27[1;36m",
+    green   = "\27[1;32m", yellow  = "\27[1;33m",
+    red     = "\27[1;31m", white   = "\27[1;37m",
+    gray    = "\27[0;90m", magenta = "\27[1;35m",
+    blue    = "\27[1;34m",
+}
+local function c(color, text) return color .. text .. C.reset end
+local SEP = "  " .. string.rep("─", 44)
+
 -- ── Stop flag ─────────────────────────────────────────────
 local STOP_FILE = INSTALL_DIR .. "/.stop"
-
 local function stop_requested()
-    local f = io.open(STOP_FILE, "r")
-    if f then f:close(); return true end
-    return false
+    local f = io.open(STOP_FILE, "r"); if f then f:close(); return true end; return false
 end
+local function clear_stop() os.execute("rm -f " .. STOP_FILE) end
 
-local function clear_stop()
-    os.execute("rm -f " .. STOP_FILE)
-end
-
--- ── Freeform / Windowed Mode (Android 13+) ───────────────
+-- ── Freeform ──────────────────────────────────────────────
 local function enable_freeform()
     shell("su -c 'settings put global enable_freeform_support 1' 2>/dev/null")
     shell("su -c 'settings put global force_resizable_activities 1' 2>/dev/null")
 end
-
 local function disable_freeform()
     shell("su -c 'settings put global enable_freeform_support 0' 2>/dev/null")
     shell("su -c 'settings put global force_resizable_activities 0' 2>/dev/null")
 end
 
--- ── Detect Package ────────────────────────────────────────
-local function detect_package(saved_pkg)
-    if saved_pkg and saved_pkg ~= "" then
-        local chk = shell_read("pm list packages | grep -F '" .. saved_pkg .. "'")
-        if chk ~= "" then return saved_pkg end
+-- ── Scan semua package Roblox di device ───────────────────
+-- Mengembalikan list semua package yang mengandung keyword tertentu
+local function scan_packages(keyword)
+    keyword = keyword or "roblox"
+    local raw = shell_read("pm list packages | grep -i '" .. keyword .. "'")
+    local pkgs = {}
+    for line in raw:gmatch("[^\r\n]+") do
+        local pkg = line:match("package:(.+)")
+        if pkg then
+            pkg = pkg:gsub("%s+", "")
+            table.insert(pkgs, pkg)
+        end
     end
-    local found = shell_read("pm list packages | grep -i roblox")
-    if found ~= "" then
-        local pkg = found:match("package:(.-)%s*[\r\n]")
-        if pkg then return pkg end
+    return pkgs
+end
+
+-- ── Pilih package dari list (interaktif) ──────────────────
+local function pick_package(pkgs, current)
+    if #pkgs == 0 then
+        print(c(C.red, "  [!] No Roblox packages found on device."))
+        print(c(C.gray, "  Enter package manually:"))
+        io.write(c(C.yellow, "  Package: "))
+        return io.read()
     end
-    return saved_pkg or "com.roblox.client"
+
+    if #pkgs == 1 then
+        return pkgs[1]
+    end
+
+    -- Lebih dari 1: tampilkan pilihan
+    print(c(C.gray, SEP))
+    print(c(C.yellow, "  Multiple Roblox packages found:"))
+    print(c(C.gray, SEP))
+    for i, pkg in ipairs(pkgs) do
+        local marker = (pkg == current) and c(C.green, " ◄ current") or ""
+        print(string.format(c(C.cyan, "  [%d]") .. c(C.white, "  %s") .. "%s", i, pkg, marker))
+    end
+    print(c(C.gray, SEP))
+    io.write(c(C.yellow, "  Select number: "))
+    local sel = tonumber(io.read())
+    if sel and pkgs[sel] then
+        return pkgs[sel]
+    end
+    return current
 end
 
 -- ── Save DB ───────────────────────────────────────────────
@@ -115,9 +146,11 @@ local function save_db(data)
     if f then
         local srv_list = {}
         for _, v in ipairs(data.list) do
+            -- simpan package per-server juga
+            local pkg_field = v.package and ('"pkg": "' .. v.package .. '", ') or ""
             table.insert(srv_list, string.format(
-                '    {"name": "%s", "link": "%s", "min": %d}',
-                v.name, v.link, v.min
+                '    {%s"name": "%s", "link": "%s", "min": %d}',
+                pkg_field, v.name, v.link, v.min
             ))
         end
         f:write('{\n' ..
@@ -138,29 +171,23 @@ local function load_db()
     local pkg   = content:match('"package"%s*:%s*"(.-)"') or "com.roblox.client"
     local ffstr = content:match('"freeform"%s*:%s*(%a+)') or "false"
     local list  = {}
-    for n, l, m in content:gmatch(
-        '{"name"%s*:%s*"(.-)"%s*,%s*"link"%s*:%s*"(.-)"%s*,%s*"min"%s*:%s*(%d+)}'
-    ) do
-        table.insert(list, {name = n, link = l, min = tonumber(m)})
+    -- Parse server dengan optional "pkg" field
+    for entry in content:gmatch("{(.-)}" ) do
+        local spkg = entry:match('"pkg"%s*:%s*"(.-)"')
+        local n    = entry:match('"name"%s*:%s*"(.-)"')
+        local l    = entry:match('"link"%s*:%s*"(.-)"')
+        local m    = entry:match('"min"%s*:%s*(%d+)')
+        if n and l and m then
+            table.insert(list, {
+                name    = n,
+                link    = l,
+                min     = tonumber(m),
+                package = spkg  -- bisa nil kalau belum di-assign
+            })
+        end
     end
     return {package = pkg, freeform = (ffstr == "true"), list = list}
 end
-
--- ── ANSI Colors ───────────────────────────────────────────
-local C = {
-    reset   = "\27[0m",
-    cyan    = "\27[1;36m",
-    green   = "\27[1;32m",
-    yellow  = "\27[1;33m",
-    red     = "\27[1;31m",
-    white   = "\27[1;37m",
-    gray    = "\27[0;90m",
-    magenta = "\27[1;35m",
-    blue    = "\27[1;34m",
-}
-
-local function c(color, text) return color .. text .. C.reset end
-local SEP = "  " .. string.rep("─", 44)
 
 -- ── Draw Header ───────────────────────────────────────────
 local function draw_header(title)
@@ -213,29 +240,27 @@ local function draw_ui(pkg, srv_name, sisa, total_m, idx, total_srv, freeform)
     print("")
 end
 
--- ── Non-blocking input check ──────────────────────────────
--- Nulis 'q' ke stop file dari sesi lain tidak practical di Lua murni,
--- jadi kita pakai pendekatan: tiap detik cek stop file
--- User bisa stop dengan buka Termux sesi baru lalu: touch /storage/emulated/0/Dragkest/.stop
--- ATAU: kita pakai stty + read dengan timeout 1 detik
-local function check_stop_input()
-    -- Set terminal non-blocking, baca 1 char, restore
-    local ret = os.execute(
-        "read -t 1 -n 1 _KEY 2>/dev/null && [ \"$_KEY\" = 'q' ] && touch " .. STOP_FILE
-    )
-    return stop_requested()
-end
-
 -- ── Main ──────────────────────────────────────────────────
 local function main()
     local db = load_db()
-    db.package = detect_package(db.package)
+
+    -- Scan package saat startup, auto-pick kalau cuma 1
+    local pkgs = scan_packages("roblox")
+    if #pkgs == 1 then
+        db.package = pkgs[1]
+    elseif #pkgs == 0 then
+        -- biarkan dari saved
+    end
+    -- kalau >1, biarkan user pilih manual dari menu
 
     while true do
-        draw_header("HOPPER SERVER")
+        draw_header("PRIVATE SERVER HOPPER")
         print(c(C.gray, SEP))
         print(c(C.yellow, "  PACKAGE   ") .. c(C.white, db.package))
         print(c(C.yellow, "  FREEFORM  ") .. (db.freeform and c(C.green, "ON ✓") or c(C.gray, "OFF")))
+        if #pkgs > 1 then
+            print(c(C.cyan, "  DETECTED  ") .. c(C.gray, #pkgs .. " Roblox packages on device"))
+        end
         print(c(C.gray, SEP))
         print("")
         print(c(C.green,   "  [1]") .. c(C.white, "  Start Auto-Hop"))
@@ -243,10 +268,11 @@ local function main()
         print(c(C.blue,    "  [3]") .. c(C.white, "  View / Delete Servers  ")
               .. c(C.gray, string.format("(%d saved)", #db.list)))
         print(c(C.magenta, "  [4]") .. c(C.white, "  Edit Server Duration"))
-        print(c(C.magenta, "  [5]") .. c(C.white, "  Change Package Name"))
-        print(c(C.cyan,    "  [6]") .. c(C.white, "  Toggle Freeform (Android 13+)  ")
+        print(c(C.magenta, "  [5]") .. c(C.white, "  Assign Package per Server"))
+        print(c(C.yellow,  "  [6]") .. c(C.white, "  Change Default Package"))
+        print(c(C.cyan,    "  [7]") .. c(C.white, "  Toggle Freeform (Android 13+)  ")
               .. (db.freeform and c(C.green, "[ON]") or c(C.gray, "[OFF]")))
-        print(c(C.red,     "  [7]") .. c(C.white, "  Exit"))
+        print(c(C.red,     "  [8]") .. c(C.white, "  Exit"))
         print("")
         print(c(C.gray, SEP))
         io.write(c(C.cyan, "  » "))
@@ -266,45 +292,40 @@ local function main()
 
                 while running do
                     local s = db.list[i]
-                    draw_header("AUTO-HOP ACTIVE")
+                    -- Gunakan package khusus server, atau fallback ke default
+                    local active_pkg = s.package or db.package
 
+                    draw_header("AUTO-HOP ACTIVE")
                     print(c(C.yellow, "  Closing Roblox..."))
-                    shell("su -c 'am force-stop " .. db.package .. "' 2>/dev/null")
+                    shell("su -c 'am force-stop " .. active_pkg .. "' 2>/dev/null")
                     shell("sleep 2")
 
-                    if stop_requested() then
-                        running = false; break
-                    end
+                    if stop_requested() then running = false; break end
 
-                    print(c(C.green, "  Opening server: " .. s.name))
+                    print(c(C.green, "  Opening: " .. s.name)
+                          .. c(C.gray, "  [" .. active_pkg .. "]"))
+
                     if db.freeform then
                         shell(string.format(
                             "su -c 'am start --windowingMode 5 -a android.intent.action.VIEW -d \"%s\" %s' > /dev/null 2>&1",
-                            s.link, db.package
+                            s.link, active_pkg
                         ))
                     else
                         shell(string.format(
                             "am start -a android.intent.action.VIEW -d '%s' %s > /dev/null 2>&1",
-                            s.link, db.package
+                            s.link, active_pkg
                         ))
                     end
 
-                    -- Countdown dengan cek stop tiap detik
                     for d = (s.min * 60), 0, -1 do
-                        draw_ui(db.package, s.name, d, s.min, i, #db.list, db.freeform)
-                        -- Cek input 'q' non-blocking via shell
+                        draw_ui(active_pkg, s.name, d, s.min, i, #db.list, db.freeform)
                         shell("read -t 1 -n 1 _K 2>/dev/null && [ \"$_K\" = 'q' ] && touch " .. STOP_FILE .. " || true")
-                        if stop_requested() then
-                            running = false; break
-                        end
+                        if stop_requested() then running = false; break end
                     end
 
-                    if running then
-                        i = (i % #db.list) + 1
-                    end
+                    if running then i = (i % #db.list) + 1 end
                 end
 
-                -- Stop: tutup Roblox, balik menu
                 clear_stop()
                 shell("clear")
                 print(c(C.yellow, "\n  [!] Hopping stopped. Closing Roblox..."))
@@ -318,10 +339,21 @@ local function main()
             io.write(c(C.yellow, "  Server Name  : ")); local n = io.read()
             io.write(c(C.yellow, "  PS Link      : ")); local l = io.read()
             io.write(c(C.yellow, "  Duration(min): ")); local m = tonumber(io.read()) or 5
+
+            -- Pilih package untuk server ini
+            local srv_pkg = nil
+            if #pkgs > 1 then
+                print(c(C.cyan, "\n  Assign a package for this server?"))
+                print(c(C.gray, "  (leave blank to use default: " .. db.package .. ")"))
+                local chosen = pick_package(pkgs, db.package)
+                if chosen ~= db.package then srv_pkg = chosen end
+            end
+
             if n ~= "" and l ~= "" then
-                table.insert(db.list, {name = n, link = l, min = m})
+                table.insert(db.list, {name = n, link = l, min = m, package = srv_pkg})
                 save_db(db)
-                print(c(C.green, "\n  [+] Server added successfully!"))
+                local pkg_info = srv_pkg and c(C.cyan, " [" .. srv_pkg .. "]") or c(C.gray, " [default]")
+                print(c(C.green, "\n  [+] Server added!") .. pkg_info)
             else
                 print(c(C.red, "\n  [!] Failed — incomplete data."))
             end
@@ -335,9 +367,10 @@ local function main()
             else
                 print(c(C.gray, SEP))
                 for idx, val in ipairs(db.list) do
+                    local pkg_tag = val.package and c(C.cyan, " [" .. val.package:sub(1,20) .. "]") or c(C.gray, " [default]")
                     print(string.format(
-                        c(C.yellow, "  [%d]") .. c(C.white, "  %-28s") .. c(C.gray, " %d min"),
-                        idx, val.name:sub(1,28), val.min
+                        c(C.yellow, "  [%d]") .. c(C.white, " %-22s") .. c(C.gray, " %dmin") .. "%s",
+                        idx, val.name:sub(1,22), val.min, pkg_tag
                     ))
                 end
                 print(c(C.gray, SEP))
@@ -355,8 +388,7 @@ local function main()
         elseif opt == "4" then
             draw_header("EDIT SERVER DURATION")
             if #db.list == 0 then
-                print(c(C.gray, "  (empty)"))
-                shell("sleep 1")
+                print(c(C.gray, "  (empty)")); shell("sleep 1")
             else
                 print(c(C.gray, SEP))
                 for idx, val in ipairs(db.list) do
@@ -369,7 +401,7 @@ local function main()
                 io.write(c(C.cyan, "\n  Select server number: "))
                 local sel = tonumber(io.read())
                 if sel and db.list[sel] then
-                    print(c(C.gray, "  Current duration : ") .. c(C.cyan, db.list[sel].min .. " min"))
+                    print(c(C.gray, "  Current: ") .. c(C.cyan, db.list[sel].min .. " min"))
                     io.write(c(C.yellow, "  New duration (min): "))
                     local new_m = tonumber(io.read())
                     if new_m and new_m > 0 then
@@ -385,30 +417,94 @@ local function main()
                 shell("sleep 2")
             end
 
-        -- ── [5] Change Package ─────────────────────────────
+        -- ── [5] Assign Package per Server ─────────────────
         elseif opt == "5" then
-            draw_header("CHANGE PACKAGE NAME")
-            print(c(C.gray, "  Current package : ") .. c(C.white, db.package))
-            print(c(C.gray, "  ─────────────────────────────────────────"))
-            print(c(C.gray, "  Any package is accepted, examples:"))
-            print(c(C.cyan, "    com.roblox."))
-            print(c(C.cyan, "    com.bajingan.client"))
-            print(c(C.cyan, "    jacob.roblox."))
-            io.write(c(C.yellow, "\n  New package : "))
-            local new_p = io.read()
-            if new_p and new_p ~= "" then
-                if not new_p:match("%.") then
-                    print(c(C.red, "\n  [!] Invalid format, must contain a dot (e.g. com.xxx.yyy)"))
+            draw_header("ASSIGN PACKAGE PER SERVER")
+            if #db.list == 0 then
+                print(c(C.gray, "  (empty)")); shell("sleep 1")
+            elseif #pkgs == 0 then
+                print(c(C.red, "  [!] No Roblox packages detected.")); shell("sleep 2")
+            else
+                print(c(C.gray, SEP))
+                for idx, val in ipairs(db.list) do
+                    local pkg_tag = val.package and c(C.cyan, val.package) or c(C.gray, "default (" .. db.package .. ")")
+                    print(string.format(
+                        c(C.yellow, "  [%d]") .. c(C.white, "  %-22s") .. "  → %s",
+                        idx, val.name:sub(1,22), pkg_tag
+                    ))
+                end
+                print(c(C.gray, SEP))
+                io.write(c(C.cyan, "\n  Select server to reassign: "))
+                local sel = tonumber(io.read())
+                if sel and db.list[sel] then
+                    print(c(C.yellow, "\n  Choose package for: ") .. c(C.white, db.list[sel].name))
+                    print(c(C.gray, "  [0]  Use default (" .. db.package .. ")"))
+                    for pi, pkg in ipairs(pkgs) do
+                        local marker = (pkg == db.list[sel].package) and c(C.green, " ◄") or ""
+                        print(string.format(c(C.cyan, "  [%d]") .. c(C.white, "  %s") .. "%s", pi, pkg, marker))
+                    end
+                    io.write(c(C.yellow, "\n  Select: "))
+                    local psel = tonumber(io.read())
+                    if psel == 0 then
+                        db.list[sel].package = nil
+                        save_db(db)
+                        print(c(C.green, "  [OK] Reset to default package."))
+                    elseif psel and pkgs[psel] then
+                        db.list[sel].package = pkgs[psel]
+                        save_db(db)
+                        print(c(C.green, "  [OK] Package assigned → " .. pkgs[psel]))
+                    else
+                        print(c(C.red, "  [!] Invalid selection."))
+                    end
                 else
-                    db.package = new_p
+                    print(c(C.red, "  [!] Invalid selection."))
+                end
+                shell("sleep 2")
+            end
+
+        -- ── [6] Change Default Package ─────────────────────
+        elseif opt == "6" then
+            draw_header("CHANGE DEFAULT PACKAGE")
+            print(c(C.gray, "  Current default : ") .. c(C.white, db.package))
+            print(c(C.gray, SEP))
+            if #pkgs > 0 then
+                print(c(C.yellow, "  Detected on device:"))
+                for pi, pkg in ipairs(pkgs) do
+                    local marker = (pkg == db.package) and c(C.green, " ◄ current") or ""
+                    print(string.format(c(C.cyan, "  [%d]") .. c(C.white, "  %s") .. "%s", pi, pkg, marker))
+                end
+                print(c(C.gray, "  [m]  Enter manually"))
+                print(c(C.gray, SEP))
+                io.write(c(C.yellow, "  Select: "))
+                local sel = io.read()
+                if tonumber(sel) and pkgs[tonumber(sel)] then
+                    db.package = pkgs[tonumber(sel)]
                     save_db(db)
+                    print(c(C.green, "  [OK] Default package → " .. db.package))
+                elseif sel == "m" then
+                    io.write(c(C.yellow, "  Enter package: "))
+                    local new_p = io.read()
+                    if new_p and new_p:match("%.") then
+                        db.package = new_p; save_db(db)
+                        print(c(C.green, "  [OK] Package updated → " .. new_p))
+                    else
+                        print(c(C.red, "  [!] Invalid format."))
+                    end
+                end
+            else
+                io.write(c(C.yellow, "  Enter package manually: "))
+                local new_p = io.read()
+                if new_p and new_p:match("%.") then
+                    db.package = new_p; save_db(db)
                     print(c(C.green, "  [OK] Package updated → " .. new_p))
+                else
+                    print(c(C.red, "  [!] Invalid format."))
                 end
             end
             shell("sleep 2")
 
-        -- ── [6] Toggle Freeform ────────────────────────────
-        elseif opt == "6" then
+        -- ── [7] Toggle Freeform ────────────────────────────
+        elseif opt == "7" then
             draw_header("FREEFORM MODE — Android 13+")
             db.freeform = not db.freeform
             save_db(db)
@@ -416,7 +512,6 @@ local function main()
                 enable_freeform()
                 print(c(C.green, "  [ON]  Freeform enabled!"))
                 print(c(C.gray,  "  App will launch in windowed mode."))
-                print(c(C.gray,  "  Make sure your device supports freeform (Android 13+)."))
             else
                 disable_freeform()
                 print(c(C.gray,  "  [OFF] Freeform disabled."))
@@ -424,8 +519,8 @@ local function main()
             end
             shell("sleep 2")
 
-        -- ── [7] Exit ───────────────────────────────────────
-        elseif opt == "7" then
+        -- ── [8] Exit ───────────────────────────────────────
+        elseif opt == "8" then
             print(c(C.cyan, "\n  Goodbye! 👋\n"))
             break
         end
