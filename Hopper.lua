@@ -1,17 +1,19 @@
 -- =========================================================
 --   ROBLOX AUTO-HOPPER PRO  ·  Termux Edition  v3.0
+--   by Dragkest
 -- =========================================================
 
--- ── Auto-Update dari GitHub ───────────────────────────────
-local REMOTE_URL   = "https://raw.githubusercontent.com/Dragkest/Hopper/refs/heads/main/Hopper.lua"
-local INSTALL_DIR  = "/sdcard/Download/Dragkest"
+-- ── Auto-Update from GitHub ───────────────────────────────
+local REMOTE_URL   = "https://raw.githubusercontent.com/gajelasfefek-afk/Dragkest/refs/heads/main/Hopper.lua"
+local INSTALL_DIR  = "/storage/emulated/0/Dragkest"
 local INSTALL_PATH = INSTALL_DIR .. "/Hopper.lua"
 local SELF_PATH    = arg and arg[0] or "Hopper.lua"
+local config_file  = INSTALL_DIR .. "/hopper_data.json"
 
 local function bootstrap()
     os.execute("mkdir -p " .. INSTALL_DIR)
 
-    io.write("\27[1;33m[~] Checking update...\27[0m\r")
+    io.write("\27[1;33m[~] Checking for updates...\27[0m\r")
     io.flush()
 
     local tmp = INSTALL_DIR .. "/.hopper_tmp.lua"
@@ -29,18 +31,17 @@ local function bootstrap()
         local new = fread(tmp)
         if old ~= new then
             os.execute("mv " .. tmp .. " " .. INSTALL_PATH)
-            print("\27[1;32m[✓] Script diperbarui dari GitHub!\27[0m")
+            print("\27[1;32m[✓] Script updated from GitHub!   \27[0m")
         else
             os.execute("rm -f " .. tmp)
-            print("\27[1;30m[✓] Versi sudah terbaru.          \27[0m")
+            print("\27[1;30m[✓] Already up to date.           \27[0m")
         end
     else
         os.execute("rm -f " .. tmp)
-        print("\27[1;31m[!] Offline — pakai versi lokal.  \27[0m")
+        print("\27[1;31m[!] Offline — using local version. \27[0m")
     end
     os.execute("sleep 1")
 
-    -- Kalau script ada di INSTALL_PATH dan bukan diri sendiri, jalanin dari sana
     local f = io.open(INSTALL_PATH, "r")
     if f then
         f:close()
@@ -57,9 +58,7 @@ bootstrap()
 --   MAIN SCRIPT
 -- =========================================================
 
-local config_file = INSTALL_DIR .. "/hopper_data.json"
-
--- ── Helper ────────────────────────────────────────────────
+-- ── Helpers ───────────────────────────────────────────────
 local function shell(cmd)
     return os.execute(cmd)
 end
@@ -82,7 +81,7 @@ local function disable_freeform()
     shell("su -c 'settings put global force_resizable_activities 0' 2>/dev/null")
 end
 
--- ── Detect Package — general, bebas prefix apapun ────────
+-- ── Detect Package ────────────────────────────────────────
 local function detect_package(saved_pkg)
     if saved_pkg and saved_pkg ~= "" then
         local chk = shell_read("pm list packages | grep -F '" .. saved_pkg .. "'")
@@ -96,7 +95,7 @@ local function detect_package(saved_pkg)
     return saved_pkg or "com.roblox.client"
 end
 
--- ── Simpan Data ke JSON ───────────────────────────────────
+-- ── Save DB ───────────────────────────────────────────────
 local function save_db(data)
     os.execute("mkdir -p " .. INSTALL_DIR)
     local f = io.open(config_file, "w")
@@ -116,7 +115,7 @@ local function save_db(data)
     end
 end
 
--- ── Baca Data dari JSON ───────────────────────────────────
+-- ── Load DB ───────────────────────────────────────────────
 local function load_db()
     local f = io.open(config_file, "r")
     if not f then
@@ -134,7 +133,7 @@ local function load_db()
     return {package = pkg, freeform = (ffstr == "true"), list = list}
 end
 
--- ── Warna ANSI ────────────────────────────────────────────
+-- ── ANSI Colors ───────────────────────────────────────────
 local C = {
     reset   = "\27[0m",
     cyan    = "\27[1;36m",
@@ -160,7 +159,7 @@ local function draw_header(title)
     print(C.reset)
 end
 
--- ── Dashboard Hopping ─────────────────────────────────────
+-- ── Hopping Dashboard ─────────────────────────────────────
 local function draw_ui(pkg, srv_name, sisa, total_m, idx, total_srv, freeform)
     shell("clear")
     local m      = math.floor(sisa / 60)
@@ -173,7 +172,7 @@ local function draw_ui(pkg, srv_name, sisa, total_m, idx, total_srv, freeform)
 
     print(C.cyan)
     print("  ╔══════════════════════════════════════════╗")
-    print("  ║        ROBLOX HOPPER  -Jacob      ║")
+    print("  ║      🎮  ROBLOX HOPPER  - Jacob  🎮      ║")
     print("  ╚══════════════════════════════════════════╝")
     print(C.reset)
 
@@ -184,10 +183,10 @@ local function draw_ui(pkg, srv_name, sisa, total_m, idx, total_srv, freeform)
           .. c(C.white, string.format("%-30s", srv_name:sub(1,29))) .. c(C.gray, "│"))
     print(c(C.gray, "  │") .. c(C.yellow, string.format(" %-13s", "SLOT"))
           .. c(C.white, string.format("%-30s",
-              string.format("%d dari %d server", idx, total_srv))) .. c(C.gray, "│"))
+              string.format("%d of %d servers", idx, total_srv))) .. c(C.gray, "│"))
     print(c(C.gray, "  │") .. c(C.yellow, string.format(" %-13s", "FREEFORM"))
           .. ff_str .. string.rep(" ", 27) .. c(C.gray, "│"))
-    print(c(C.gray, "  │") .. c(C.yellow, string.format(" %-13s", "SISA WAKTU"))
+    print(c(C.gray, "  │") .. c(C.yellow, string.format(" %-13s", "TIME LEFT"))
           .. c(C.cyan, string.format("%02d:%02d", m, s))
           .. c(C.gray, string.format(" / %d:00 min", total_m))
           .. string.rep(" ", 17 - #tostring(total_m)) .. c(C.gray, "│"))
@@ -196,8 +195,8 @@ local function draw_ui(pkg, srv_name, sisa, total_m, idx, total_srv, freeform)
           .. c(C.gray, "│"))
     print(c(C.gray, "  └──────────────────────────────────────────┘"))
     print("")
-    print(c(C.green, "  ● STATUS  ") .. c(C.white, "Roblox sedang berjalan"))
-    print(c(C.gray,  "  ⌨  CTRL+C  ") .. c(C.gray, "untuk menghentikan script"))
+    print(c(C.green, "  ● STATUS   ") .. c(C.white, "Roblox is running"))
+    print(c(C.gray,  "  ⌨  CTRL+C  ") .. c(C.gray, "to stop the script"))
     print("")
 end
 
@@ -207,29 +206,29 @@ local function main()
     db.package = detect_package(db.package)
 
     while true do
-        draw_header("ROBLOX PRIVATE SERVER HOPPER")
+        draw_header("PRIVATE SERVER HOPPER")
         print(c(C.gray, SEP))
         print(c(C.yellow, "  PACKAGE   ") .. c(C.white, db.package))
         print(c(C.yellow, "  FREEFORM  ") .. (db.freeform and c(C.green, "ON ✓") or c(C.gray, "OFF")))
         print(c(C.gray, SEP))
         print("")
-        print(c(C.green,   "  [1]") .. c(C.white, "  Jalankan Auto-Hop"))
-        print(c(C.blue,    "  [2]") .. c(C.white, "  Tambah Private Server"))
-        print(c(C.blue,    "  [3]") .. c(C.white, "  Lihat / Hapus Server  ")
-              .. c(C.gray, string.format("(%d tersimpan)", #db.list)))
-        print(c(C.magenta, "  [4]") .. c(C.white, "  Ganti Package Name"))
-        print(c(C.cyan,    "  [5]") .. c(C.white, "  Toggle Freeform Android 13  ")
+        print(c(C.green,   "  [1]") .. c(C.white, "  Start Auto-Hop"))
+        print(c(C.blue,    "  [2]") .. c(C.white, "  Add Private Server"))
+        print(c(C.blue,    "  [3]") .. c(C.white, "  View / Delete Servers  ")
+              .. c(C.gray, string.format("(%d saved)", #db.list)))
+        print(c(C.magenta, "  [4]") .. c(C.white, "  Change Package Name"))
+        print(c(C.cyan,    "  [5]") .. c(C.white, "  Toggle Freeform (Android 13+)  ")
               .. (db.freeform and c(C.green, "[ON]") or c(C.gray, "[OFF]")))
-        print(c(C.red,     "  [6]") .. c(C.white, "  Keluar"))
+        print(c(C.red,     "  [6]") .. c(C.white, "  Exit"))
         print("")
         print(c(C.gray, SEP))
         io.write(c(C.cyan, "  » "))
         local opt = io.read()
 
-        -- ── [1] Auto-Hop ───────────────────────────────────
+        -- ── [1] Start Auto-Hop ─────────────────────────────
         if opt == "1" then
             if #db.list == 0 then
-                print(c(C.red, "\n  [!] List server kosong. Tambah dulu!"))
+                print(c(C.red, "\n  [!] Server list is empty. Add one first!"))
                 shell("sleep 2")
             else
                 if db.freeform then enable_freeform() end
@@ -237,13 +236,13 @@ local function main()
                 local i = 1
                 while true do
                     local s = db.list[i]
-                    draw_header("AUTO-HOP AKTIF")
+                    draw_header("AUTO-HOP ACTIVE")
 
-                    print(c(C.yellow, "  Menutup Roblox..."))
+                    print(c(C.yellow, "  Closing Roblox..."))
                     shell("su -c 'am force-stop " .. db.package .. "' 2>/dev/null")
                     shell("sleep 2")
 
-                    print(c(C.green, "  Membuka server: " .. s.name))
+                    print(c(C.green, "  Opening server: " .. s.name))
                     if db.freeform then
                         shell(string.format(
                             "su -c 'am start --windowingMode 5 -a android.intent.action.VIEW -d \"%s\" %s' > /dev/null 2>&1",
@@ -265,26 +264,26 @@ local function main()
                 end
             end
 
-        -- ── [2] Tambah Server ──────────────────────────────
+        -- ── [2] Add Server ─────────────────────────────────
         elseif opt == "2" then
-            draw_header("TAMBAH PRIVATE SERVER")
-            io.write(c(C.yellow, "  Nama Server  : ")); local n = io.read()
-            io.write(c(C.yellow, "  Link PS      : ")); local l = io.read()
-            io.write(c(C.yellow, "  Durasi (mnt) : ")); local m = tonumber(io.read()) or 5
+            draw_header("ADD PRIVATE SERVER")
+            io.write(c(C.yellow, "  Server Name  : ")); local n = io.read()
+            io.write(c(C.yellow, "  PS Link      : ")); local l = io.read()
+            io.write(c(C.yellow, "  Duration(min): ")); local m = tonumber(io.read()) or 5
             if n ~= "" and l ~= "" then
                 table.insert(db.list, {name = n, link = l, min = m})
                 save_db(db)
-                print(c(C.green, "\n  [+] Berhasil ditambahkan!"))
+                print(c(C.green, "\n  [+] Server added successfully!"))
             else
-                print(c(C.red, "\n  [!] Gagal — data tidak lengkap."))
+                print(c(C.red, "\n  [!] Failed — incomplete data."))
             end
             shell("sleep 1")
 
-        -- ── [3] Lihat / Hapus ──────────────────────────────
+        -- ── [3] View / Delete ──────────────────────────────
         elseif opt == "3" then
-            draw_header("DAFTAR SERVER")
+            draw_header("SERVER LIST")
             if #db.list == 0 then
-                print(c(C.gray, "  (kosong)"))
+                print(c(C.gray, "  (empty)"))
             else
                 print(c(C.gray, SEP))
                 for idx, val in ipairs(db.list) do
@@ -295,33 +294,33 @@ local function main()
                 end
                 print(c(C.gray, SEP))
             end
-            io.write(c(C.cyan, "\n  Nomor untuk hapus / [x] kembali: "))
+            io.write(c(C.cyan, "\n  Enter number to delete / [x] to go back: "))
             local del = io.read()
             if tonumber(del) and db.list[tonumber(del)] then
                 table.remove(db.list, tonumber(del))
                 save_db(db)
-                print(c(C.green, "  [-] Berhasil dihapus!"))
+                print(c(C.green, "  [-] Server deleted!"))
                 shell("sleep 1")
             end
 
-        -- ── [4] Ganti Package ──────────────────────────────
+        -- ── [4] Change Package ─────────────────────────────
         elseif opt == "4" then
-            draw_header("GANTI PACKAGE NAME")
-            print(c(C.gray,   "  Package saat ini : ") .. c(C.white, db.package))
-            print(c(C.gray,   "  ─────────────────────────────────────────"))
-            print(c(C.gray,   "  Package apapun diterima, contoh:"))
-            print(c(C.cyan,   "    com.roblox.client"))
-            print(c(C.cyan,   "    com.byfron.roblox"))
-            print(c(C.cyan,   "    app.roblox.android"))
-            io.write(c(C.yellow, "\n  Package baru : "))
+            draw_header("CHANGE PACKAGE NAME")
+            print(c(C.gray, "  Current package : ") .. c(C.white, db.package))
+            print(c(C.gray, "  ─────────────────────────────────────────"))
+            print(c(C.gray, "  Any package is accepted, examples:"))
+            print(c(C.cyan, "    com.roblox.client"))
+            print(c(C.cyan, "    jacob."))
+            print(c(C.cyan, "    com.bajingan."))
+            io.write(c(C.yellow, "\n  New package : "))
             local new_p = io.read()
             if new_p and new_p ~= "" then
                 if not new_p:match("%.") then
-                    print(c(C.red, "\n  [!] Format kurang valid, minimal ada titik (contoh: com.xxx.yyy)"))
+                    print(c(C.red, "\n  [!] Invalid format, must contain a dot (e.g. com.xxx.yyy)"))
                 else
                     db.package = new_p
                     save_db(db)
-                    print(c(C.green, "  [OK] Package diperbarui → " .. new_p))
+                    print(c(C.green, "  [OK] Package updated → " .. new_p))
                 end
             end
             shell("sleep 2")
@@ -333,19 +332,19 @@ local function main()
             save_db(db)
             if db.freeform then
                 enable_freeform()
-                print(c(C.green, "  [ON]  Freeform diaktifkan!"))
-                print(c(C.gray,  "  App akan launch dalam mode windowed."))
-                print(c(C.gray,  "  Pastikan device support freeform (Android 13+)."))
+                print(c(C.green, "  [ON]  Freeform enabled!"))
+                print(c(C.gray,  "  App will launch in windowed mode."))
+                print(c(C.gray,  "  Make sure your device supports freeform (Android 13+)."))
             else
                 disable_freeform()
-                print(c(C.gray,  "  [OFF] Freeform dimatikan."))
-                print(c(C.gray,  "  App akan launch fullscreen seperti biasa."))
+                print(c(C.gray,  "  [OFF] Freeform disabled."))
+                print(c(C.gray,  "  App will launch in fullscreen as usual."))
             end
             shell("sleep 2")
 
-        -- ── [6] Keluar ─────────────────────────────────────
+        -- ── [6] Exit ───────────────────────────────────────
         elseif opt == "6" then
-            print(c(C.cyan, "\n  Sampai jumpa! 👋\n"))
+            print(c(C.cyan, "\n  Goodbye! 👋\n"))
             break
         end
     end
