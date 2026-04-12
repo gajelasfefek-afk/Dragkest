@@ -18,7 +18,7 @@ local function bootstrap()
 
     local tmp = INSTALL_DIR .. "/.hopper_tmp.lua"
     local ret = os.execute(string.format(
-        "curl -fsSL --connect-timeout 5 -o '%s' '%s' 2>/dev/null",
+        "curl -L -o '%s' '%s' 2>/dev/null",
         tmp, REMOTE_URL
     ))
 
@@ -68,6 +68,19 @@ local function shell_read(cmd)
     if not f then return "" end
     local s = f:read("*a"); f:close()
     return s or ""
+end
+
+-- ── Stop flag ─────────────────────────────────────────────
+local STOP_FILE = INSTALL_DIR .. "/.stop"
+
+local function stop_requested()
+    local f = io.open(STOP_FILE, "r")
+    if f then f:close(); return true end
+    return false
+end
+
+local function clear_stop()
+    os.execute("rm -f " .. STOP_FILE)
 end
 
 -- ── Freeform / Windowed Mode (Android 13+) ───────────────
@@ -196,8 +209,21 @@ local function draw_ui(pkg, srv_name, sisa, total_m, idx, total_srv, freeform)
     print(c(C.gray, "  └──────────────────────────────────────────┘"))
     print("")
     print(c(C.green, "  ● STATUS   ") .. c(C.white, "Roblox is running"))
-    print(c(C.gray,  "  ⌨  CTRL+C  ") .. c(C.gray, "to stop the script"))
+    print(c(C.red,   "  [Q] STOP   ") .. c(C.gray, "type q + Enter to stop hopping"))
     print("")
+end
+
+-- ── Non-blocking input check ──────────────────────────────
+-- Nulis 'q' ke stop file dari sesi lain tidak practical di Lua murni,
+-- jadi kita pakai pendekatan: tiap detik cek stop file
+-- User bisa stop dengan buka Termux sesi baru lalu: touch /storage/emulated/0/Dragkest/.stop
+-- ATAU: kita pakai stty + read dengan timeout 1 detik
+local function check_stop_input()
+    -- Set terminal non-blocking, baca 1 char, restore
+    local ret = os.execute(
+        "read -t 1 -n 1 _KEY 2>/dev/null && [ \"$_KEY\" = 'q' ] && touch " .. STOP_FILE
+    )
+    return stop_requested()
 end
 
 -- ── Main ──────────────────────────────────────────────────
@@ -206,7 +232,7 @@ local function main()
     db.package = detect_package(db.package)
 
     while true do
-        draw_header("PRIVATE SERVER HOPPER")
+        draw_header("HOPPER SERVER")
         print(c(C.gray, SEP))
         print(c(C.yellow, "  PACKAGE   ") .. c(C.white, db.package))
         print(c(C.yellow, "  FREEFORM  ") .. (db.freeform and c(C.green, "ON ✓") or c(C.gray, "OFF")))
@@ -216,10 +242,11 @@ local function main()
         print(c(C.blue,    "  [2]") .. c(C.white, "  Add Private Server"))
         print(c(C.blue,    "  [3]") .. c(C.white, "  View / Delete Servers  ")
               .. c(C.gray, string.format("(%d saved)", #db.list)))
-        print(c(C.magenta, "  [4]") .. c(C.white, "  Change Package Name"))
-        print(c(C.cyan,    "  [5]") .. c(C.white, "  Toggle Freeform (Android 13+)  ")
+        print(c(C.magenta, "  [4]") .. c(C.white, "  Edit Server Duration"))
+        print(c(C.magenta, "  [5]") .. c(C.white, "  Change Package Name"))
+        print(c(C.cyan,    "  [6]") .. c(C.white, "  Toggle Freeform (Android 13+)  ")
               .. (db.freeform and c(C.green, "[ON]") or c(C.gray, "[OFF]")))
-        print(c(C.red,     "  [6]") .. c(C.white, "  Exit"))
+        print(c(C.red,     "  [7]") .. c(C.white, "  Exit"))
         print("")
         print(c(C.gray, SEP))
         io.write(c(C.cyan, "  » "))
@@ -232,15 +259,22 @@ local function main()
                 shell("sleep 2")
             else
                 if db.freeform then enable_freeform() end
+                clear_stop()
 
                 local i = 1
-                while true do
+                local running = true
+
+                while running do
                     local s = db.list[i]
                     draw_header("AUTO-HOP ACTIVE")
 
                     print(c(C.yellow, "  Closing Roblox..."))
                     shell("su -c 'am force-stop " .. db.package .. "' 2>/dev/null")
                     shell("sleep 2")
+
+                    if stop_requested() then
+                        running = false; break
+                    end
 
                     print(c(C.green, "  Opening server: " .. s.name))
                     if db.freeform then
@@ -255,13 +289,27 @@ local function main()
                         ))
                     end
 
+                    -- Countdown dengan cek stop tiap detik
                     for d = (s.min * 60), 0, -1 do
                         draw_ui(db.package, s.name, d, s.min, i, #db.list, db.freeform)
-                        shell("sleep 1")
+                        -- Cek input 'q' non-blocking via shell
+                        shell("read -t 1 -n 1 _K 2>/dev/null && [ \"$_K\" = 'q' ] && touch " .. STOP_FILE .. " || true")
+                        if stop_requested() then
+                            running = false; break
+                        end
                     end
 
-                    i = (i % #db.list) + 1
+                    if running then
+                        i = (i % #db.list) + 1
+                    end
                 end
+
+                -- Stop: tutup Roblox, balik menu
+                clear_stop()
+                shell("clear")
+                print(c(C.yellow, "\n  [!] Hopping stopped. Closing Roblox..."))
+                shell("su -c 'am force-stop " .. db.package .. "' 2>/dev/null")
+                shell("sleep 2")
             end
 
         -- ── [2] Add Server ─────────────────────────────────
@@ -303,15 +351,49 @@ local function main()
                 shell("sleep 1")
             end
 
-        -- ── [4] Change Package ─────────────────────────────
+        -- ── [4] Edit Duration ──────────────────────────────
         elseif opt == "4" then
+            draw_header("EDIT SERVER DURATION")
+            if #db.list == 0 then
+                print(c(C.gray, "  (empty)"))
+                shell("sleep 1")
+            else
+                print(c(C.gray, SEP))
+                for idx, val in ipairs(db.list) do
+                    print(string.format(
+                        c(C.yellow, "  [%d]") .. c(C.white, "  %-24s") .. c(C.cyan, " %d min"),
+                        idx, val.name:sub(1,24), val.min
+                    ))
+                end
+                print(c(C.gray, SEP))
+                io.write(c(C.cyan, "\n  Select server number: "))
+                local sel = tonumber(io.read())
+                if sel and db.list[sel] then
+                    print(c(C.gray, "  Current duration : ") .. c(C.cyan, db.list[sel].min .. " min"))
+                    io.write(c(C.yellow, "  New duration (min): "))
+                    local new_m = tonumber(io.read())
+                    if new_m and new_m > 0 then
+                        db.list[sel].min = new_m
+                        save_db(db)
+                        print(c(C.green, "  [OK] Duration updated → " .. new_m .. " min"))
+                    else
+                        print(c(C.red, "  [!] Invalid input."))
+                    end
+                else
+                    print(c(C.red, "  [!] Invalid selection."))
+                end
+                shell("sleep 2")
+            end
+
+        -- ── [5] Change Package ─────────────────────────────
+        elseif opt == "5" then
             draw_header("CHANGE PACKAGE NAME")
             print(c(C.gray, "  Current package : ") .. c(C.white, db.package))
             print(c(C.gray, "  ─────────────────────────────────────────"))
             print(c(C.gray, "  Any package is accepted, examples:"))
-            print(c(C.cyan, "    com.roblox.client"))
-            print(c(C.cyan, "    jacob."))
-            print(c(C.cyan, "    com.bajingan."))
+            print(c(C.cyan, "    com.roblox."))
+            print(c(C.cyan, "    com.bajingan.client"))
+            print(c(C.cyan, "    jacob.roblox."))
             io.write(c(C.yellow, "\n  New package : "))
             local new_p = io.read()
             if new_p and new_p ~= "" then
@@ -325,8 +407,8 @@ local function main()
             end
             shell("sleep 2")
 
-        -- ── [5] Toggle Freeform ────────────────────────────
-        elseif opt == "5" then
+        -- ── [6] Toggle Freeform ────────────────────────────
+        elseif opt == "6" then
             draw_header("FREEFORM MODE — Android 13+")
             db.freeform = not db.freeform
             save_db(db)
@@ -342,8 +424,8 @@ local function main()
             end
             shell("sleep 2")
 
-        -- ── [6] Exit ───────────────────────────────────────
-        elseif opt == "6" then
+        -- ── [7] Exit ───────────────────────────────────────
+        elseif opt == "7" then
             print(c(C.cyan, "\n  Goodbye! 👋\n"))
             break
         end
