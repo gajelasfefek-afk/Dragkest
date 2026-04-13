@@ -93,7 +93,7 @@ local function disable_freeform()
     shell("su -c 'settings put global force_resizable_activities 0' 2>/dev/null")
 end
 
--- ── Scan SEMUA package di device (bukan filter roblox) ───
+-- ── Scan SEMUA package di device ─────────────────────────
 local function scan_packages()
     local raw = shell_read("su -c 'pm list packages' 2>/dev/null")
     local pkgs = {}
@@ -103,32 +103,27 @@ local function scan_packages()
             table.insert(pkgs, pkg)
         end
     end
-    -- Sort biar rapi
     table.sort(pkgs)
     return pkgs
 end
 
 -- ── Parse input range/multi pilihan ──────────────────────
--- Input bisa: "1", "1,3", "2,3,4", "1-4", "1-3,5"
 local function parse_selection(input, max)
     local selected = {}
     local seen = {}
     for part in input:gmatch("[^,]+") do
-        part = part:match("^%s*(.-)%s*$") -- trim
+        part = part:match("^%s*(.-)%s*$")
         local a, b = part:match("^(%d+)-(%d+)$")
         if a and b then
-            -- range
             for i = tonumber(a), tonumber(b) do
                 if i >= 1 and i <= max and not seen[i] then
-                    table.insert(selected, i)
-                    seen[i] = true
+                    table.insert(selected, i); seen[i] = true
                 end
             end
         else
             local n = tonumber(part)
             if n and n >= 1 and n <= max and not seen[n] then
-                table.insert(selected, n)
-                seen[n] = true
+                table.insert(selected, n); seen[n] = true
             end
         end
     end
@@ -149,7 +144,6 @@ local function save_db(data)
                 pkg_field, v.name, v.link, v.min
             ))
         end
-        -- Simpan active_pkgs sebagai array JSON
         local ap_list = {}
         for _, p in ipairs(data.active_pkgs or {}) do
             table.insert(ap_list, '"' .. p .. '"')
@@ -172,8 +166,6 @@ local function load_db()
     local content = f:read("*a"); f:close()
     local pkg   = content:match('"package"%s*:%s*"(.-)"') or "com.roblox.client"
     local ffstr = content:match('"freeform"%s*:%s*(%a+)') or "false"
-
-    -- Parse active_pkgs array
     local active_pkgs = {}
     local ap_raw = content:match('"active_pkgs"%s*:%s*%[(.-)%]')
     if ap_raw then
@@ -181,7 +173,6 @@ local function load_db()
             table.insert(active_pkgs, p)
         end
     end
-
     local list = {}
     for entry in content:gmatch("{(.-)}") do
         local spkg = entry:match('"pkg"%s*:%s*"(.-)"')
@@ -249,14 +240,14 @@ end
 -- ── Main ──────────────────────────────────────────────────
 local function main()
     local db   = load_db()
-    local pkgs = scan_packages()
+    local pkgs = scan_packages()  -- semua package, cuma dipakai di menu [6]
 
     while true do
         draw_header("PRIVATE SERVER HOPPER")
         print(c(C.gray, SEP))
         print(c(C.yellow, "  DEFAULT   ") .. c(C.white, db.package))
         if #db.active_pkgs > 0 then
-            print(c(C.yellow, "  RUNNING   ") .. c(C.cyan, #db.active_pkgs .. " package(s) active"))
+            print(c(C.yellow, "  RUNNING   ") .. c(C.cyan, #db.active_pkgs .. " package(s)"))
             for _, p in ipairs(db.active_pkgs) do
                 print(c(C.gray, "             · ") .. c(C.white, p))
             end
@@ -287,23 +278,17 @@ local function main()
             else
                 if db.freeform then enable_freeform() end
                 clear_stop()
-
-                -- Tentuin package yang dipakai: active_pkgs atau fallback default
                 local run_pkgs = #db.active_pkgs > 0 and db.active_pkgs or {db.package}
-
                 local i = 1
                 local running = true
 
                 while running do
                     local s = db.list[i]
-                    -- Kalau server punya package sendiri, pakai itu
-                    -- Kalau tidak, rotate semua active_pkgs per server
                     local pkg_idx = ((i - 1) % #run_pkgs) + 1
                     local active_pkg = s.package or run_pkgs[pkg_idx]
 
                     draw_header("AUTO-HOP ACTIVE")
                     print(c(C.yellow, "  Closing Roblox..."))
-                    -- Stop semua active package
                     for _, ap in ipairs(run_pkgs) do
                         shell("su -c 'am force-stop " .. ap .. "' 2>/dev/null")
                     end
@@ -351,29 +336,26 @@ local function main()
             io.write(c(C.yellow, "  PS Link      : ")); local l = io.read()
             io.write(c(C.yellow, "  Duration(min): ")); local m = tonumber(io.read()) or 5
 
+            -- Assign package dari active_pkgs aja
             local srv_pkg = nil
-            if #pkgs > 0 then
-                print(c(C.cyan, "\n  Assign specific package? (optional)"))
-                print(c(C.gray, "  [0]  Use active packages (default)"))
-                -- Tampilkan max 20 package biar ga overflow
-                local show_max = math.min(#pkgs, 20)
-                for pi = 1, show_max do
-                    print(string.format(c(C.cyan, "  [%d]") .. c(C.white, "  %s"), pi, pkgs[pi]))
+            local source = #db.active_pkgs > 0 and db.active_pkgs or {}
+            if #source > 1 then
+                print(c(C.cyan, "\n  Assign specific package for this server:"))
+                print(c(C.gray, "  [0]  Rotate all active packages"))
+                for pi, pkg in ipairs(source) do
+                    print(string.format(c(C.cyan, "  [%d]") .. c(C.white, "  %s"), pi, pkg))
                 end
-                if #pkgs > 20 then
-                    print(c(C.gray, "  ... and " .. (#pkgs - 20) .. " more. Use [6] to browse all."))
-                end
-                io.write(c(C.yellow, "  Select (0 = default): "))
+                io.write(c(C.yellow, "  Select (0 = rotate): "))
                 local psel = tonumber(io.read())
-                if psel and psel > 0 and pkgs[psel] then
-                    srv_pkg = pkgs[psel]
+                if psel and psel > 0 and source[psel] then
+                    srv_pkg = source[psel]
                 end
             end
 
             if n ~= "" and l ~= "" then
                 table.insert(db.list, {name=n, link=l, min=m, package=srv_pkg})
                 save_db(db)
-                local tag = srv_pkg and c(C.cyan, " [" .. srv_pkg .. "]") or c(C.gray, " [active pkgs]")
+                local tag = srv_pkg and c(C.cyan, " [" .. srv_pkg .. "]") or c(C.gray, " [rotate active pkgs]")
                 print(c(C.green, "\n  [+] Server added!") .. tag)
             else
                 print(c(C.red, "\n  [!] Failed — incomplete data."))
@@ -388,7 +370,9 @@ local function main()
             else
                 print(c(C.gray, SEP))
                 for idx, val in ipairs(db.list) do
-                    local tag = val.package and c(C.cyan, " [" .. val.package:sub(1,18) .. "]") or c(C.gray, " [active pkgs]")
+                    local tag = val.package
+                        and c(C.cyan, " [" .. val.package:sub(1,18) .. "]")
+                        or  c(C.gray, " [rotate]")
                     print(string.format(
                         c(C.yellow, "  [%d]") .. c(C.white, " %-20s") .. c(C.gray, " %dmin") .. "%s",
                         idx, val.name:sub(1,20), val.min, tag
@@ -439,16 +423,22 @@ local function main()
             end
 
         -- ── [5] Assign Package per Server ─────────────────
+        -- Ngambil dari active_pkgs yang sudah dipilih user, bukan semua package
         elseif opt == "5" then
             draw_header("ASSIGN PACKAGE PER SERVER")
             if #db.list == 0 then
                 print(c(C.gray, "  (empty)")); shell("sleep 1")
-            elseif #pkgs == 0 then
-                print(c(C.red, "  [!] No packages detected.")); shell("sleep 2")
+            elseif #db.active_pkgs == 0 then
+                print(c(C.red,  "  [!] No active packages set."))
+                print(c(C.gray, "  Set active packages first via menu [6]."))
+                shell("sleep 2")
             else
+                -- Tampilkan list server
                 print(c(C.gray, SEP))
                 for idx, val in ipairs(db.list) do
-                    local tag = val.package and c(C.cyan, val.package) or c(C.gray, "active pkgs")
+                    local tag = val.package
+                        and c(C.cyan, val.package)
+                        or  c(C.gray, "rotate")
                     print(string.format(
                         c(C.yellow, "  [%d]") .. c(C.white, "  %-22s") .. "  → %s",
                         idx, val.name:sub(1,22), tag
@@ -459,22 +449,25 @@ local function main()
                 local sel = tonumber(io.read())
                 if sel and db.list[sel] then
                     print(c(C.yellow, "\n  Package for: ") .. c(C.white, db.list[sel].name))
-                    print(c(C.gray, "  [0]  Use active packages"))
-                    local show_max = math.min(#pkgs, 20)
-                    for pi = 1, show_max do
-                        local mark = (pkgs[pi] == db.list[sel].package) and c(C.green, " ◄") or ""
-                        print(string.format(c(C.cyan, "  [%d]") .. c(C.white, "  %s") .. "%s", pi, pkgs[pi], mark))
+                    print(c(C.gray, "  [0]  Rotate all active packages"))
+                    -- Tampilkan HANYA active_pkgs
+                    for pi, pkg in ipairs(db.active_pkgs) do
+                        local mark = (pkg == db.list[sel].package) and c(C.green, " ◄") or ""
+                        print(string.format(
+                            c(C.cyan, "  [%d]") .. c(C.white, "  %s") .. "%s",
+                            pi, pkg, mark
+                        ))
                     end
                     io.write(c(C.yellow, "\n  Select: "))
                     local psel = tonumber(io.read())
                     if psel == 0 then
                         db.list[sel].package = nil
                         save_db(db)
-                        print(c(C.green, "  [OK] Reset to active packages."))
-                    elseif psel and pkgs[psel] then
-                        db.list[sel].package = pkgs[psel]
+                        print(c(C.green, "  [OK] Set to rotate."))
+                    elseif psel and db.active_pkgs[psel] then
+                        db.list[sel].package = db.active_pkgs[psel]
                         save_db(db)
-                        print(c(C.green, "  [OK] Assigned → " .. pkgs[psel]))
+                        print(c(C.green, "  [OK] Assigned → " .. db.active_pkgs[psel]))
                     else
                         print(c(C.red, "  [!] Invalid."))
                     end
@@ -485,12 +478,12 @@ local function main()
             end
 
         -- ── [6] Select Active Packages ─────────────────────
+        -- Semua package ditampilkan di sini, user filter sendiri
         elseif opt == "6" then
             draw_header("SELECT ACTIVE PACKAGES")
             if #pkgs == 0 then
                 print(c(C.red, "  [!] No packages detected.")); shell("sleep 2")
             else
-                -- Tampilkan semua package dengan search filter
                 print(c(C.gray, "  Filter by keyword (Enter to show all):"))
                 io.write(c(C.yellow, "  Search: "))
                 local kw = io.read():lower()
@@ -509,34 +502,34 @@ local function main()
                     shell("clear")
                     draw_header("SELECT ACTIVE PACKAGES")
                     print(c(C.gray, SEP))
-                    print(c(C.gray, "  Currently active:"))
-                    if #db.active_pkgs == 0 then
-                        print(c(C.gray, "  (none — using default: " .. db.package .. ")"))
-                    else
+                    if #db.active_pkgs > 0 then
+                        print(c(C.yellow, "  Currently active:"))
                         for _, p in ipairs(db.active_pkgs) do
                             print(c(C.green, "  ✓ ") .. c(C.white, p))
                         end
+                        print(c(C.gray, SEP))
                     end
-                    print(c(C.gray, SEP))
                     for i, pkg in ipairs(filtered) do
                         local active = false
                         for _, ap in ipairs(db.active_pkgs) do
                             if ap == pkg then active = true; break end
                         end
                         local mark = active and c(C.green, " ✓") or ""
-                        print(string.format(c(C.cyan, "  [%3d]") .. c(C.white, "  %s") .. "%s", i, pkg, mark))
+                        print(string.format(
+                            c(C.cyan, "  [%3d]") .. c(C.white, "  %s") .. "%s",
+                            i, pkg, mark
+                        ))
                     end
                     print(c(C.gray, SEP))
-                    print(c(C.gray, "  Select packages to run simultaneously."))
                     print(c(C.gray, "  Examples: 1  |  1,3  |  2-5  |  1,3-5,7"))
-                    print(c(C.gray, "  [0] = clear / use default only"))
+                    print(c(C.gray, "  [0] = clear selection"))
                     io.write(c(C.yellow, "\n  Select: "))
                     local input = io.read()
 
                     if input == "0" then
                         db.active_pkgs = {}
                         save_db(db)
-                        print(c(C.green, "  [OK] Cleared — using default package."))
+                        print(c(C.green, "  [OK] Cleared."))
                     else
                         local indices = parse_selection(input, #filtered)
                         if #indices == 0 then
@@ -546,7 +539,6 @@ local function main()
                             for _, idx in ipairs(indices) do
                                 table.insert(db.active_pkgs, filtered[idx])
                             end
-                            -- Set default ke package pertama yang dipilih
                             db.package = db.active_pkgs[1]
                             save_db(db)
                             print(c(C.green, "  [OK] Active packages set:"))
